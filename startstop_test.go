@@ -3,6 +3,7 @@ package startstop_test
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -540,11 +541,27 @@ func (c *InvalidCase) Run() {
 
 	err := startstop.Start(objects, nil)
 	ensure.NotNil(c.T, err)
-	ensure.DeepEqual(c.T, err.Error(), c.Message)
+	c.EnsureExpectedCycle(err)
 
 	err = startstop.Stop(objects, nil)
 	ensure.NotNil(c.T, err)
-	ensure.DeepEqual(c.T, err.Error(), c.Message)
+	c.EnsureExpectedCycle(err)
+}
+
+func (c *InvalidCase) EnsureExpectedCycle(e error) {
+	actualParts := strings.Split(e.Error(), "\n")
+	// drop last repeat part if not a cycle to it self
+	if len(actualParts) > 1 {
+		actualParts = actualParts[0 : len(actualParts)-1]
+	}
+
+	expectedParts := strings.Split(c.Message, "\n")
+	// drop last repeat part if not a cycle to it self
+	if len(expectedParts) > 1 {
+		expectedParts = expectedParts[0 : len(expectedParts)-1]
+	}
+
+	ensure.SameElements(c.T, actualParts, expectedParts)
 }
 
 // A ↔ B
@@ -557,9 +574,9 @@ func TestCodependentPair(t *testing.T) {
 			"B": {"A"},
 		},
 		Message: `circular reference detected from
-field B in <nil>
 field A in <nil>
-field B in <nil>`,
+field B in <nil>
+field A in <nil>`,
 	}).Run()
 }
 
@@ -576,10 +593,10 @@ func TestTriangleWithTwoStarts(t *testing.T) {
 			"C": {"A"},
 		},
 		Message: `circular reference detected from
+field A in <nil>
 field B in <nil>
 field C in <nil>
-field A in <nil>
-field B in <nil>`,
+field A in <nil>`,
 	}).Run()
 }
 
@@ -597,11 +614,11 @@ func TestSquareWithTwoStarts(t *testing.T) {
 			"D": {"A"},
 		},
 		Message: `circular reference detected from
+field A in <nil>
 field B in <nil>
 field C in <nil>
 field D in <nil>
-field A in <nil>
-field B in <nil>`,
+field A in <nil>`,
 	}).Run()
 }
 
