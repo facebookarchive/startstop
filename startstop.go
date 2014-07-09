@@ -51,7 +51,7 @@ func Start(objects []*inject.Object, log Logger) error {
 	}
 
 	var wg sync.WaitGroup
-	var returnErr error
+	var returnErr singleError
 	for i := len(levels) - 1; i >= 0; i-- {
 		level := levels[i]
 		for _, o := range level {
@@ -70,7 +70,7 @@ func Start(objects []*inject.Object, log Logger) error {
 						log.Debugf("opening %s", o)
 					}
 					if err := openerO.Open(); err != nil {
-						returnErr = err
+						returnErr.Set(err)
 					}
 				}
 				if starterO, ok := o.Value.(Starter); ok {
@@ -78,14 +78,14 @@ func Start(objects []*inject.Object, log Logger) error {
 						log.Debugf("starting %s", o)
 					}
 					if err := starterO.Start(); err != nil {
-						returnErr = err
+						returnErr.Set(err)
 					}
 				}
 			}(o)
 		}
 		wg.Wait()
-		if returnErr != nil {
-			return returnErr
+		if err := returnErr.Error(); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -101,7 +101,7 @@ func Stop(objects []*inject.Object, log Logger) error {
 	}
 
 	var wg sync.WaitGroup
-	var returnErr error
+	var returnErr singleError
 	for _, level := range levels {
 		for _, o := range level {
 			// avoid creating the goroutine unless necessary
@@ -122,7 +122,7 @@ func Stop(objects []*inject.Object, log Logger) error {
 						if log != nil {
 							log.Errorf("error stopping %s: %s", o, err)
 						}
-						returnErr = err
+						returnErr.Set(err)
 					}
 				}
 				if closerO, ok := o.Value.(Closer); ok {
@@ -133,14 +133,14 @@ func Stop(objects []*inject.Object, log Logger) error {
 						if log != nil {
 							log.Errorf("error closing %s: %s", o, err)
 						}
-						returnErr = err
+						returnErr.Set(err)
 					}
 				}
 			}(o)
 		}
 		wg.Wait()
-		if returnErr != nil {
-			return returnErr
+		if err := returnErr.Error(); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -266,4 +266,23 @@ func isEligible(i *inject.Object) bool {
 		return true
 	}
 	return false
+}
+
+type singleError struct {
+	error error
+	sync.Mutex
+}
+
+func (s *singleError) Error() error {
+	s.Lock()
+	defer s.Unlock()
+	return s.error
+}
+
+func (s *singleError) Set(err error) {
+	s.Lock()
+	defer s.Unlock()
+	if s.error == nil {
+		s.error = err
+	}
 }
