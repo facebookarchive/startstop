@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
-	"sync"
 
 	"github.com/facebookgo/inject"
 )
@@ -41,106 +40,70 @@ type Logger interface {
 	Errorf(f string, args ...interface{})
 }
 
-// Start the graph, in the right order. Objects that don't depend on each other
-// will be started in parallel. Start will call Start or Open if an object
-// satisfies the associated interface.
+// Start the graph, in the right order. Start will call Start or Open if an
+// object satisfies the associated interface.
 func Start(objects []*inject.Object, log Logger) error {
 	levels, err := levels(objects)
 	if err != nil {
 		return err
 	}
 
-	var wg sync.WaitGroup
-	var returnErr singleError
 	for i := len(levels) - 1; i >= 0; i-- {
 		level := levels[i]
 		for _, o := range level {
-			// avoid creating the goroutine unless necessary
-			_, isOpener := o.Value.(Opener)
-			_, isStarter := o.Value.(Starter)
-			if !isStarter && !isOpener {
-				continue
+			if openerO, ok := o.Value.(Opener); ok {
+				if log != nil {
+					log.Debugf("opening %s", o)
+				}
+				if err := openerO.Open(); err != nil {
+					return err
+				}
 			}
-
-			wg.Add(1)
-			go func(o *inject.Object) {
-				defer wg.Done()
-				if openerO, ok := o.Value.(Opener); ok {
-					if log != nil {
-						log.Debugf("opening %s", o)
-					}
-					if err := openerO.Open(); err != nil {
-						returnErr.Set(err)
-					}
+			if starterO, ok := o.Value.(Starter); ok {
+				if log != nil {
+					log.Debugf("starting %s", o)
 				}
-				if starterO, ok := o.Value.(Starter); ok {
-					if log != nil {
-						log.Debugf("starting %s", o)
-					}
-					if err := starterO.Start(); err != nil {
-						returnErr.Set(err)
-					}
+				if err := starterO.Start(); err != nil {
+					return err
 				}
-			}(o)
-		}
-		wg.Wait()
-		if err := returnErr.Error(); err != nil {
-			return err
+			}
 		}
 	}
 	return nil
 }
 
-// Stop the graph, in the right order. Objects that don't depend on each other
-// will be stopped in parallel. Stop will call Stop or Close if an object
-// satisfies the associated interface.
+// Stop the graph, in the right order. Stop will call Stop or Close if an
+// object satisfies the associated interface.
 func Stop(objects []*inject.Object, log Logger) error {
 	levels, err := levels(objects)
 	if err != nil {
 		return err
 	}
 
-	var wg sync.WaitGroup
-	var returnErr singleError
 	for _, level := range levels {
 		for _, o := range level {
-			// avoid creating the goroutine unless necessary
-			_, isStopper := o.Value.(Stopper)
-			_, isCloser := o.Value.(Closer)
-			if !isStopper && !isCloser {
-				continue
+			if stopperO, ok := o.Value.(Stopper); ok {
+				if log != nil {
+					log.Debugf("stopping %s", o)
+				}
+				if err := stopperO.Stop(); err != nil {
+					if log != nil {
+						log.Errorf("error stopping %s: %s", o, err)
+					}
+					return err
+				}
 			}
-
-			wg.Add(1)
-			go func(o *inject.Object) {
-				defer wg.Done()
-				if stopperO, ok := o.Value.(Stopper); ok {
-					if log != nil {
-						log.Debugf("stopping %s", o)
-					}
-					if err := stopperO.Stop(); err != nil {
-						if log != nil {
-							log.Errorf("error stopping %s: %s", o, err)
-						}
-						returnErr.Set(err)
-					}
+			if closerO, ok := o.Value.(Closer); ok {
+				if log != nil {
+					log.Debugf("closing %s", o)
 				}
-				if closerO, ok := o.Value.(Closer); ok {
+				if err := closerO.Close(); err != nil {
 					if log != nil {
-						log.Debugf("closing %s", o)
+						log.Errorf("error closing %s: %s", o, err)
 					}
-					if err := closerO.Close(); err != nil {
-						if log != nil {
-							log.Errorf("error closing %s: %s", o, err)
-						}
-						returnErr.Set(err)
-					}
+					return err
 				}
-			}(o)
-		}
-		wg.Wait()
-		if err := returnErr.Error(); err != nil {
-			return err
+			}
 		}
 	}
 	return nil
@@ -266,23 +229,4 @@ func isEligible(i *inject.Object) bool {
 		return true
 	}
 	return false
-}
-
-type singleError struct {
-	error error
-	sync.Mutex
-}
-
-func (s *singleError) Error() error {
-	s.Lock()
-	defer s.Unlock()
-	return s.error
-}
-
-func (s *singleError) Set(err error) {
-	s.Lock()
-	defer s.Unlock()
-	if s.error == nil {
-		s.error = err
-	}
 }

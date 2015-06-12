@@ -103,36 +103,6 @@ func TestStartError(t *testing.T) {
 	<-fin
 }
 
-func TestTwoStartErrors(t *testing.T) {
-	fin1 := make(chan struct{})
-	err1 := errors.New("err1")
-	obj1 := &startStop{
-		start: func() error {
-			defer close(fin1)
-			return err1
-		},
-	}
-	fin2 := make(chan struct{})
-	err2 := errors.New("err2")
-	obj2 := &startButNoStop{
-		start: func() error {
-			defer close(fin2)
-			return err2
-		},
-	}
-
-	var g inject.Graph
-	ensure.Nil(t, g.Provide(
-		&inject.Object{Value: obj1},
-		&inject.Object{Value: obj2},
-	))
-	ensure.Nil(t, g.Populate())
-	actual := startstop.Start(g.Objects(), nil)
-	ensure.True(t, actual == err1 || actual == err2)
-	<-fin1
-	<-fin2
-}
-
 func TestStopError(t *testing.T) {
 	fin := make(chan struct{})
 	actual := errors.New("err")
