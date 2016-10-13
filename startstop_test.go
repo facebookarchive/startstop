@@ -103,6 +103,44 @@ func TestStartError(t *testing.T) {
 	<-fin
 }
 
+func TestTryStartError(t *testing.T) {
+	res := make(chan int, 3)
+	actual := errors.New("err")
+	obj1 := &startStop{
+		start: func() error {
+			defer func() { res <- 1 }()
+			return nil
+		},
+		stop: func() error {
+			defer func() { res <- 3 }()
+			return nil
+		},
+	}
+	obj2 := &startStop2{
+		start: func() error {
+			defer func() { res <- 2 }()
+			return actual
+		},
+		stop: func() error {
+			t.Fatal("should not get called")
+			return nil
+		},
+	}
+
+	var g inject.Graph
+	ensure.Nil(t, g.Provide(
+		&inject.Object{Value: obj1},
+		&inject.Object{Value: obj2},
+	))
+	ensure.Nil(t, g.Populate())
+	started, err := startstop.TryStart(g.Objects(), nil)
+	ensure.DeepEqual(t, <-res, 1)
+	ensure.DeepEqual(t, <-res, 2)
+	ensure.DeepEqual(t, err, actual)
+	ensure.Nil(t, startstop.Stop(started, nil))
+	ensure.DeepEqual(t, <-res, 3)
+}
+
 func TestStopError(t *testing.T) {
 	fin := make(chan struct{})
 	actual := errors.New("err")
